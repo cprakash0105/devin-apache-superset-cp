@@ -30,13 +30,15 @@ def init_db():
                 status TEXT,
                 pull_requests TEXT DEFAULT '',
                 acus_consumed REAL DEFAULT 0.0,
-                created_at INTEGER DEFAULT 0
+                created_at INTEGER DEFAULT 0,
+                updated_at INTEGER DEFAULT 0
             )
         """)
         for col, definition in [
             ("pull_requests", "TEXT DEFAULT ''"),
             ("acus_consumed", "REAL DEFAULT 0.0"),
             ("created_at", "INTEGER DEFAULT 0"),
+            ("updated_at", "INTEGER DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {definition}")
@@ -47,10 +49,10 @@ def init_db():
 def save_session(record: SessionRecord):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?)",
             (record.issue_number, record.issue_title, record.issue_url,
              record.session_id, record.session_url, record.status,
-             record.pull_requests, record.acus_consumed, record.created_at),
+             record.pull_requests, record.acus_consumed, record.created_at, record.updated_at),
         )
 
 
@@ -69,8 +71,8 @@ def sync_active_sessions():
             print(f"   {session_id[:8]} → {new_status} | prs={prs or 'none'} | acus={acus}")
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
-                    (new_status, prs, acus, session_id),
+                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=?, updated_at=? WHERE session_id=?",
+                    (new_status, prs, acus, session.get("updated_at", 0), session_id),
                 )
         except Exception as e:
             print(f"⚠️  Could not refresh {session_id[:8]}: {e}")
@@ -132,6 +134,7 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
         pull_requests="",
         acus_consumed=0.0,
         created_at=session.get("created_at", 0),
+        updated_at=session.get("updated_at", 0),
     )
     save_session(record)
     print(f"✅ Devin session started for issue #{payload.issue.number}: {session['url']}")
@@ -144,8 +147,8 @@ def status(session_id: str):
     prs = ", ".join(pr.get("pr_url", pr.get("url", "")) for pr in session.get("pull_requests", []))
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
-            (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
+            "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=?, updated_at=? WHERE session_id=?",
+            (session["status"], prs, session.get("acus_consumed", 0.0), session.get("updated_at", 0), session_id),
         )
     return RedirectResponse(url="/dashboard")
 
@@ -162,17 +165,26 @@ def dashboard():
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
 
-    total = len(rows)
-    finished = sum(1 for r in rows if r[5] == "finished")
-    running = sum(1 for r in rows if r[5] == "running")
-    suspended = sum(1 for r in rows if r[5] == "suspended")
-    failed = sum(1 for r in rows if r[5] == "failed")
-    total_acus = sum(r[7] or 0 for r in rows)
-    prs_created = sum(1 for r in rows if r[6])
-    # A task is complete when it has a PR — aligns completed with PRs created
+    # exclude test issues from stats
+    real_rows = [r for r in rows if "[Test]" not in (r[1] or "")]
+    total = len(real_rows)
+    finished = sum(1 for r in real_rows if r[5] == "finished")
+    running = sum(1 for r in real_rows if r[5] == "running")
+    suspended = sum(1 for r in real_rows if r[5] == "suspended")
+    failed = sum(1 for r in real_rows if r[5] == "failed")
+    total_acus = sum(r[7] or 0 for r in real_rows)
+    prs_created = sum(1 for r in real_rows if r[6])
     completed = prs_created
     success_rate = f"{(completed / total * 100):.0f}%" if total else "—"
     eng_hours_saved = prs_created * 2
+    # avg resolution time from sessions that have both created_at and updated_at
+    resolved = [r for r in real_rows if r[6] and len(r) > 9 and r[8] and r[9] and r[9] > r[8]]
+    if resolved:
+        avg_secs = sum(r[9] - r[8] for r in resolved) / len(resolved)
+        avg_mins = int(avg_secs // 60)
+        avg_time = f"{avg_mins}m"
+    else:
+        avg_time = "—"
 
     pipeline_html = f"""
     <div class="pipeline">
@@ -192,21 +204,21 @@ def dashboard():
         <div class="stat"><div class="stat-val">{total}</div><div class="stat-label">Tasks Submitted</div></div>
         <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{completed}</div><div class="stat-label">Tasks Completed</div></div>
         <div class="stat" style="border-color:#3b82f6"><div class="stat-val" style="color:#3b82f6">{running}</div><div class="stat-label">Tasks Running</div></div>
-        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{suspended}</div><div class="stat-label">Awaiting Review</div></div>
+        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{suspended}</div><div class="stat-label">Suspended</div></div>
         <div class="stat" style="border-color:#ef4444"><div class="stat-val" style="color:#ef4444">{failed}</div><div class="stat-label">Tasks Failed</div></div>
         <div class="stat" style="border-color:#6366f1"><div class="stat-val" style="color:#6366f1">{success_rate}</div><div class="stat-label">Success Rate</div></div>
         <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{prs_created}</div><div class="stat-label">PRs Created</div></div>
         <div class="stat" style="border-color:#059669"><div class="stat-val" style="color:#059669">{eng_hours_saved}h</div><div class="stat-label">Eng. Hours Saved</div></div>
-        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{total_acus:.2f}</div><div class="stat-label">ACUs Consumed</div></div>
+        <div class="stat" style="border-color:#8b5cf6"><div class="stat-val" style="color:#8b5cf6">{avg_time}</div><div class="stat-label">Avg Resolution Time</div></div>
     </div>"""
 
     rows_html = ""
     for row in rows:
         issue_number, issue_title, issue_url, session_id, session_url, status = row[0], row[1], row[2], row[3], row[4], row[5]
         pull_requests = row[6] or ""
-        acus = row[7] or 0.0
         created_at = row[8] or 0
-        color = {"running": "#3b82f6", "finished": "#10b981", "failed": "#ef4444", "suspended": "#f59e0b", "new": "#6b7280"}.get(status, "#6b7280")
+        display_status = "PR Opened" if pull_requests and status == "suspended" else status
+        color = {"running": "#3b82f6", "finished": "#10b981", "PR Opened": "#10b981", "failed": "#ef4444", "suspended": "#f59e0b", "new": "#6b7280"}.get(display_status, "#6b7280")
         created = datetime.datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M") if created_at else "—"
         pr_links = ""
         for pr_url in pull_requests.split(", "):
@@ -218,9 +230,8 @@ def dashboard():
         <tr>
             <td><a href="{issue_url}" target="_blank">#{issue_number}</a></td>
             <td>{issue_title}</td>
-            <td><span style="color:{color};font-weight:bold">{status}</span></td>
+            <td><span style="color:{color};font-weight:bold">{display_status}</span></td>
             <td>{pr_links}</td>
-            <td>{acus:.2f}</td>
             <td>{created}</td>
             <td><a href="{session_url}" target="_blank">View</a> &nbsp; <a href="/status/{session_id}">↻ Refresh</a></td>
         </tr>"""
@@ -257,9 +268,9 @@ def dashboard():
         {stats_html}
         <table>
             <tr>
-                <th>Issue</th><th>Title</th><th>Status</th><th>Pull Request</th><th>ACUs</th><th>Started</th><th>Actions</th>
+                <th>Issue</th><th>Title</th><th>Status</th><th>Pull Request</th><th>Started</th><th>Actions</th>
             </tr>
-            {rows_html if rows_html else '<tr><td colspan="7" style="text-align:center;color:#6b7280;padding:2rem">No sessions yet</td></tr>'}
+            {rows_html if rows_html else '<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:2rem">No sessions yet</td></tr>'}
         </table>
     </body>
     </html>
