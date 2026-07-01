@@ -22,3 +22,6 @@ class SessionRecord(BaseModel):
     session_id: str
     session_url: str
     status: str
+    pull_requests: str = ""
+    acus_consumed: float = 0.0
+    created_at: int = 0
