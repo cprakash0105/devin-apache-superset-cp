@@ -149,6 +149,7 @@ def refresh_all():
         active = conn.execute(
             "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
         ).fetchall()
+    print(f"🔄 refresh_all called — {len(active)} active sessions found")
     updated = 0
     for (session_id,) in active:
         try:
