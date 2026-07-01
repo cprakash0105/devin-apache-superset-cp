@@ -133,14 +133,24 @@ def dashboard():
     running = sum(1 for r in rows if r[5] == "running")
     failed = sum(1 for r in rows if r[5] == "failed")
     total_acus = sum(r[7] if len(r) > 7 else 0 for r in rows)
+    success_rate = f"{(finished / total * 100):.0f}%" if total else "—"
+    prs_created = sum(1 for r in rows if len(r) > 6 and r[6])
+    finished_rows = [r for r in rows if r[5] == "finished" and len(r) > 8 and r[8]]
+    if finished_rows:
+        times = [(r[8] - rows[0][8]) for r in finished_rows]
+        avg_mins = abs(sum(times) / len(times)) // 60
+        avg_time = f"{int(avg_mins)}m"
+    else:
+        avg_time = "—"
 
     stats_html = f"""
-    <div style="display:flex;gap:1rem;margin-bottom:1.5rem">
-        <div class="stat"><div class="stat-val">{total}</div><div class="stat-label">Total Sessions</div></div>
-        <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{finished}</div><div class="stat-label">Finished</div></div>
-        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{running}</div><div class="stat-label">Running</div></div>
-        <div class="stat" style="border-color:#ef4444"><div class="stat-val" style="color:#ef4444">{failed}</div><div class="stat-label">Failed</div></div>
-        <div class="stat" style="border-color:#6366f1"><div class="stat-val" style="color:#6366f1">{total_acus:.2f}</div><div class="stat-label">ACUs Consumed</div></div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1.5rem">
+        <div class="stat"><div class="stat-val">{total}</div><div class="stat-label">Tasks Submitted</div></div>
+        <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{finished}</div><div class="stat-label">Tasks Completed</div></div>
+        <div class="stat" style="border-color:#ef4444"><div class="stat-val" style="color:#ef4444">{failed}</div><div class="stat-label">Tasks Failed</div></div>
+        <div class="stat" style="border-color:#6366f1"><div class="stat-val" style="color:#6366f1">{success_rate}</div><div class="stat-label">Success Rate</div></div>
+        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{avg_time}</div><div class="stat-label">Avg Resolution Time</div></div>
+        <div class="stat" style="border-color:#3b82f6"><div class="stat-val" style="color:#3b82f6">{prs_created}</div><div class="stat-label">PRs Created</div></div>
     </div>"""
 
     rows_html = ""
