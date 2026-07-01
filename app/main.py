@@ -154,6 +154,7 @@ def refresh_all():
         try:
             session = get_session(session_id)
             prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+            print(f"🔄 Session {session_id[:8]} → status={session['status']} prs={prs} acus={session.get('acus_consumed', 0.0)}")
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
                     "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
