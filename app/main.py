@@ -7,7 +7,7 @@ import sqlite3
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.devin_client import create_session, get_session
 from app.models import GitHubWebhookPayload, SessionRecord
@@ -63,7 +63,7 @@ def sync_active_sessions():
     for (session_id,) in active:
         try:
             session = get_session(session_id)
-            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+            prs = ", ".join(pr.get("pr_url", pr.get("url", "")) for pr in session.get("pull_requests", []))
             new_status = session["status"]
             acus = session.get("acus_consumed", 0.0)
             print(f"   {session_id[:8]} → {new_status} | prs={prs or 'none'} | acus={acus}")
@@ -141,13 +141,13 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
 @app.get("/status/{session_id}")
 def status(session_id: str):
     session = get_session(session_id)
-    prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+    prs = ", ".join(pr.get("pr_url", pr.get("url", "")) for pr in session.get("pull_requests", []))
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
             (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
         )
-    return {"session_id": session_id, "status": session["status"], "pull_requests": session.get("pull_requests", [])}
+    return RedirectResponse(url="/dashboard")
 
 
 @app.get("/refresh-all")
