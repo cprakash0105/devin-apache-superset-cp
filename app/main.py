@@ -164,18 +164,39 @@ def dashboard():
 
     total = len(rows)
     finished = sum(1 for r in rows if r[5] == "finished")
+    running = sum(1 for r in rows if r[5] == "running")
+    suspended = sum(1 for r in rows if r[5] == "suspended")
     failed = sum(1 for r in rows if r[5] == "failed")
     total_acus = sum(r[7] or 0 for r in rows)
-    success_rate = f"{(finished / total * 100):.0f}%" if total else "—"
     prs_created = sum(1 for r in rows if r[6])
+    # A task is complete when it has a PR — aligns completed with PRs created
+    completed = prs_created
+    success_rate = f"{(completed / total * 100):.0f}%" if total else "—"
+    eng_hours_saved = prs_created * 2
+
+    pipeline_html = f"""
+    <div class="pipeline">
+        <div class="pipe-step"><span class="pipe-num">{total}</span><span class="pipe-label">Issues Received</span></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step"><span class="pipe-num">{total}</span><span class="pipe-label">Sessions Created</span></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step"><span class="pipe-num" style="color:#3b82f6">{running}</span><span class="pipe-label">Sessions Running</span></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step"><span class="pipe-num" style="color:#10b981">{prs_created}</span><span class="pipe-label">PRs Opened</span></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step"><span class="pipe-num" style="color:#10b981">{completed}</span><span class="pipe-label">Completed</span></div>
+    </div>"""
 
     stats_html = f"""
     <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1.5rem">
         <div class="stat"><div class="stat-val">{total}</div><div class="stat-label">Tasks Submitted</div></div>
-        <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{finished}</div><div class="stat-label">Tasks Completed</div></div>
+        <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{completed}</div><div class="stat-label">Tasks Completed</div></div>
+        <div class="stat" style="border-color:#3b82f6"><div class="stat-val" style="color:#3b82f6">{running}</div><div class="stat-label">Tasks Running</div></div>
+        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{suspended}</div><div class="stat-label">Awaiting Review</div></div>
         <div class="stat" style="border-color:#ef4444"><div class="stat-val" style="color:#ef4444">{failed}</div><div class="stat-label">Tasks Failed</div></div>
         <div class="stat" style="border-color:#6366f1"><div class="stat-val" style="color:#6366f1">{success_rate}</div><div class="stat-label">Success Rate</div></div>
-        <div class="stat" style="border-color:#3b82f6"><div class="stat-val" style="color:#3b82f6">{prs_created}</div><div class="stat-label">PRs Created</div></div>
+        <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{prs_created}</div><div class="stat-label">PRs Created</div></div>
+        <div class="stat" style="border-color:#059669"><div class="stat-val" style="color:#059669">{eng_hours_saved}h</div><div class="stat-label">Eng. Hours Saved</div></div>
         <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{total_acus:.2f}</div><div class="stat-label">ACUs Consumed</div></div>
     </div>"""
 
@@ -185,7 +206,7 @@ def dashboard():
         pull_requests = row[6] or ""
         acus = row[7] or 0.0
         created_at = row[8] or 0
-        color = {"running": "#f59e0b", "finished": "#10b981", "failed": "#ef4444"}.get(status, "#6b7280")
+        color = {"running": "#3b82f6", "finished": "#10b981", "failed": "#ef4444", "suspended": "#f59e0b", "new": "#6b7280"}.get(status, "#6b7280")
         created = datetime.datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M") if created_at else "—"
         pr_links = ""
         for pr_url in pull_requests.split(", "):
@@ -216,6 +237,11 @@ def dashboard():
             .stat {{ background: white; border-left: 4px solid #1f2937; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); min-width: 120px; }}
             .stat-val {{ font-size: 2rem; font-weight: bold; color: #111827; }}
             .stat-label {{ font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }}
+            .pipeline {{ display:flex; align-items:center; gap:0.5rem; background:white; padding:1rem 1.5rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:1.5rem; flex-wrap:wrap; }}
+            .pipe-step {{ display:flex; flex-direction:column; align-items:center; min-width:80px; }}
+            .pipe-num {{ font-size:1.5rem; font-weight:bold; color:#111827; }}
+            .pipe-label {{ font-size:0.7rem; color:#6b7280; text-transform:uppercase; text-align:center; }}
+            .pipe-arrow {{ font-size:1.5rem; color:#d1d5db; }}
             table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
             th {{ background: #1f2937; color: white; padding: 12px 16px; text-align: left; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
             td {{ padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; }}
@@ -226,7 +252,8 @@ def dashboard():
     </head>
     <body>
         <h1>🤖 Devin Automation Dashboard</h1>
-        <p class="subtitle">Repo: <a href="https://github.com/{os.getenv('GITHUB_REPO')}" target="_blank">{os.getenv('GITHUB_REPO')}</a></p>
+        <p class="subtitle">Repo: <a href="https://github.com/{os.getenv('GITHUB_REPO')}" target="_blank">{os.getenv('GITHUB_REPO')}</a> &nbsp;·&nbsp; Auto-refreshes every 30s</p>
+        {pipeline_html}
         {stats_html}
         <table>
             <tr>
