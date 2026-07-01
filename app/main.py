@@ -143,9 +143,32 @@ def status(session_id: str):
     return {"session_id": session_id, "status": session["status"], "pull_requests": session.get("pull_requests", [])}
 
 
+@app.get("/refresh-all")
+def refresh_all():
+    with sqlite3.connect(DB_PATH) as conn:
+        active = conn.execute(
+            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
+        ).fetchall()
+    updated = 0
+    for (session_id,) in active:
+        try:
+            session = get_session(session_id)
+            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
+                    (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
+                )
+            updated += 1
+        except Exception as e:
+            print(f"⚠️  Could not refresh session {session_id}: {e}")
+    return {"updated": updated}
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     import datetime
+    refresh_all()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
 
