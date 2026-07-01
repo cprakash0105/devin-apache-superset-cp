@@ -102,7 +102,12 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
 
     prompt = (
         f"You are working on the GitHub repository: https://github.com/{os.getenv('GITHUB_REPO')}.\n"
-        f"Please fix the following issue and open a pull request:\n\n"
+        f"Please fix the following issue and open a pull request.\n"
+        f"Important instructions:\n"
+        f"- Do not ask for confirmation or approval at any point\n"
+        f"- If the issue is already partially resolved, open a PR documenting the current state and any remaining work\n"
+        f"- Always open a pull request as the final step, even if the fix is minor\n"
+        f"- Use branch name: devin/issue-{payload.issue.number}\n\n"
         f"Issue #{payload.issue.number}: {payload.issue.title}\n\n"
         f"{payload.issue.body}"
     )
