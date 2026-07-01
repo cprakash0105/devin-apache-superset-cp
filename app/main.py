@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import hmac
 import json
@@ -14,7 +15,7 @@ from app.models import GitHubWebhookPayload, SessionRecord
 load_dotenv()
 
 app = FastAPI()
-DB_PATH = "observability/sessions.db"
+DB_PATH = os.getenv("DB_PATH", "/app/observability/sessions.db")
 
 
 def init_db():
@@ -32,8 +33,11 @@ def init_db():
                 created_at INTEGER DEFAULT 0
             )
         """)
-        # migrate existing DB if columns missing
-        for col, definition in [("pull_requests", "TEXT DEFAULT ''"), ("acus_consumed", "REAL DEFAULT 0.0"), ("created_at", "INTEGER DEFAULT 0")]:
+        for col, definition in [
+            ("pull_requests", "TEXT DEFAULT ''"),
+            ("acus_consumed", "REAL DEFAULT 0.0"),
+            ("created_at", "INTEGER DEFAULT 0"),
+        ]:
             try:
                 conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {definition}")
             except Exception:
@@ -50,6 +54,28 @@ def save_session(record: SessionRecord):
         )
 
 
+def sync_active_sessions():
+    with sqlite3.connect(DB_PATH) as conn:
+        active = conn.execute(
+            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
+        ).fetchall()
+    print(f"🔄 sync_active_sessions — {len(active)} active sessions")
+    for (session_id,) in active:
+        try:
+            session = get_session(session_id)
+            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+            new_status = session["status"]
+            acus = session.get("acus_consumed", 0.0)
+            print(f"   {session_id[:8]} → {new_status} | prs={prs or 'none'} | acus={acus}")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
+                    (new_status, prs, acus, session_id),
+                )
+        except Exception as e:
+            print(f"⚠️  Could not refresh {session_id[:8]}: {e}")
+
+
 def verify_signature(payload: bytes, signature: str) -> bool:
     secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
     mac = hmac.new(secret.encode(), msg=payload, digestmod=hashlib.sha256)
@@ -60,22 +86,7 @@ def verify_signature(payload: bytes, signature: str) -> bool:
 @app.on_event("startup")
 def startup():
     init_db()
-    # refresh any sessions that were left in non-terminal state
-    with sqlite3.connect(DB_PATH) as conn:
-        stale = conn.execute(
-            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
-        ).fetchall()
-    for (session_id,) in stale:
-        try:
-            session = get_session(session_id)
-            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.execute(
-                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
-                    (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
-                )
-        except Exception as e:
-            print(f"⚠️  Could not refresh session {session_id}: {e}")
+    sync_active_sessions()
 
 
 @app.post("/webhook")
@@ -86,18 +97,16 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     data = json.loads(payload_bytes)
+    print(f"📥 Webhook received: action={data.get('action')}")
 
-    print(f"📥 Webhook received: action={data.get('action')}, keys={list(data.keys())}")
-
-    # Only process newly opened issues
     if data.get("action") != "opened":
         return {"status": "ignored"}
 
     payload = GitHubWebhookPayload(**data)
-    labels = [l["name"] for l in payload.issue.labels]
+    labels = [label["name"] for label in payload.issue.labels]
 
     if "devin-fix" not in labels:
-        print(f"⏭️  Skipping issue #{payload.issue.number} — no devin-fix label, labels={labels}")
+        print(f"⏭️  Skipping #{payload.issue.number} — no devin-fix label")
         return {"status": "ignored", "reason": "no devin-fix label"}
 
     prompt = (
@@ -113,7 +122,6 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
     )
 
     session = create_session(prompt)
-
     record = SessionRecord(
         issue_number=payload.issue.number,
         issue_title=payload.issue.title,
@@ -126,7 +134,6 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
         created_at=session.get("created_at", 0),
     )
     save_session(record)
-
     print(f"✅ Devin session started for issue #{payload.issue.number}: {session['url']}")
     return {"session_id": session["session_id"], "session_url": session["url"]}
 
@@ -145,49 +152,22 @@ def status(session_id: str):
 
 @app.get("/refresh-all")
 def refresh_all():
-    with sqlite3.connect(DB_PATH) as conn:
-        active = conn.execute(
-            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
-        ).fetchall()
-    print(f"🔄 refresh_all called — {len(active)} active sessions found")
-    updated = 0
-    for (session_id,) in active:
-        try:
-            session = get_session(session_id)
-            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
-            print(f"🔄 Session {session_id[:8]} → status={session['status']} prs={prs} acus={session.get('acus_consumed', 0.0)}")
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.execute(
-                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
-                    (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
-                )
-            updated += 1
-        except Exception as e:
-            print(f"⚠️  Could not refresh session {session_id}: {e}")
-    return {"updated": updated}
+    sync_active_sessions()
+    return {"status": "ok"}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
-    import datetime
-    refresh_all()
+    sync_active_sessions()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
 
     total = len(rows)
     finished = sum(1 for r in rows if r[5] == "finished")
-    running = sum(1 for r in rows if r[5] == "running")
     failed = sum(1 for r in rows if r[5] == "failed")
-    total_acus = sum(r[7] if len(r) > 7 else 0 for r in rows)
+    total_acus = sum(r[7] or 0 for r in rows)
     success_rate = f"{(finished / total * 100):.0f}%" if total else "—"
-    prs_created = sum(1 for r in rows if len(r) > 6 and r[6])
-    finished_rows = [r for r in rows if r[5] == "finished" and len(r) > 8 and r[8]]
-    if finished_rows:
-        times = [(r[8] - rows[0][8]) for r in finished_rows]
-        avg_mins = abs(sum(times) / len(times)) // 60
-        avg_time = f"{int(avg_mins)}m"
-    else:
-        avg_time = "—"
+    prs_created = sum(1 for r in rows if r[6])
 
     stats_html = f"""
     <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1.5rem">
@@ -195,24 +175,23 @@ def dashboard():
         <div class="stat" style="border-color:#10b981"><div class="stat-val" style="color:#10b981">{finished}</div><div class="stat-label">Tasks Completed</div></div>
         <div class="stat" style="border-color:#ef4444"><div class="stat-val" style="color:#ef4444">{failed}</div><div class="stat-label">Tasks Failed</div></div>
         <div class="stat" style="border-color:#6366f1"><div class="stat-val" style="color:#6366f1">{success_rate}</div><div class="stat-label">Success Rate</div></div>
-        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{avg_time}</div><div class="stat-label">Avg Resolution Time</div></div>
         <div class="stat" style="border-color:#3b82f6"><div class="stat-val" style="color:#3b82f6">{prs_created}</div><div class="stat-label">PRs Created</div></div>
+        <div class="stat" style="border-color:#f59e0b"><div class="stat-val" style="color:#f59e0b">{total_acus:.2f}</div><div class="stat-label">ACUs Consumed</div></div>
     </div>"""
 
     rows_html = ""
     for row in rows:
         issue_number, issue_title, issue_url, session_id, session_url, status = row[0], row[1], row[2], row[3], row[4], row[5]
-        pull_requests = row[6] if len(row) > 6 else ""
-        acus = row[7] if len(row) > 7 else 0.0
-        created_at = row[8] if len(row) > 8 else 0
+        pull_requests = row[6] or ""
+        acus = row[7] or 0.0
+        created_at = row[8] or 0
         color = {"running": "#f59e0b", "finished": "#10b981", "failed": "#ef4444"}.get(status, "#6b7280")
         created = datetime.datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M") if created_at else "—"
         pr_links = ""
-        if pull_requests:
-            for pr_url in pull_requests.split(", "):
-                if pr_url:
-                    pr_num = pr_url.rstrip("/").split("/")[-1]
-                    pr_links += f'<a href="{pr_url}" target="_blank">PR #{pr_num}</a> '
+        for pr_url in pull_requests.split(", "):
+            if pr_url:
+                pr_num = pr_url.rstrip("/").split("/")[-1]
+                pr_links += f'<a href="{pr_url}" target="_blank">PR #{pr_num}</a> '
         pr_links = pr_links or "<span style='color:#9ca3af'>pending</span>"
         rows_html += f"""
         <tr>
@@ -220,7 +199,7 @@ def dashboard():
             <td>{issue_title}</td>
             <td><span style="color:{color};font-weight:bold">{status}</span></td>
             <td>{pr_links}</td>
-            <td>{acus or 0:.2f}</td>
+            <td>{acus:.2f}</td>
             <td>{created}</td>
             <td><a href="{session_url}" target="_blank">View</a> &nbsp; <a href="/status/{session_id}">↻ Refresh</a></td>
         </tr>"""
