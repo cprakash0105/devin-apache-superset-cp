@@ -60,6 +60,22 @@ def verify_signature(payload: bytes, signature: str) -> bool:
 @app.on_event("startup")
 def startup():
     init_db()
+    # refresh any sessions that were left in non-terminal state
+    with sqlite3.connect(DB_PATH) as conn:
+        stale = conn.execute(
+            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
+        ).fetchall()
+    for (session_id,) in stale:
+        try:
+            session = get_session(session_id)
+            prs = ", ".join(pr.get("url", "") for pr in session.get("pull_requests", []))
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE sessions SET status=?, pull_requests=?, acus_consumed=? WHERE session_id=?",
+                    (session["status"], prs, session.get("acus_consumed", 0.0), session_id),
+                )
+        except Exception as e:
+            print(f"⚠️  Could not refresh session {session_id}: {e}")
 
 
 @app.post("/webhook")
@@ -183,6 +199,7 @@ def dashboard():
     <html>
     <head>
         <title>Devin Automation Dashboard</title>
+        <meta http-equiv="refresh" content="30">
         <style>
             body {{ font-family: sans-serif; padding: 2rem; background: #f9fafb; }}
             h1 {{ color: #111827; margin-bottom: 0.25rem; }}
