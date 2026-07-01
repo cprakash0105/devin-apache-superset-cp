@@ -61,6 +61,8 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
 
     data = json.loads(payload_bytes)
 
+    print(f"📥 Webhook received: action={data.get('action')}, keys={list(data.keys())}")
+
     # Only process newly opened issues
     if data.get("action") != "opened":
         return {"status": "ignored"}
@@ -69,6 +71,7 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(None)):
     labels = [l["name"] for l in payload.issue.labels]
 
     if "devin-fix" not in labels:
+        print(f"⏭️  Skipping issue #{payload.issue.number} — no devin-fix label, labels={labels}")
         return {"status": "ignored", "reason": "no devin-fix label"}
 
     prompt = (
