@@ -132,7 +132,7 @@ def dashboard():
     finished = sum(1 for r in rows if r[5] == "finished")
     running = sum(1 for r in rows if r[5] == "running")
     failed = sum(1 for r in rows if r[5] == "failed")
-    total_acus = sum(r[7] or 0 for r in rows)
+    total_acus = sum(r[7] if len(r) > 7 else 0 for r in rows)
 
     stats_html = f"""
     <div style="display:flex;gap:1rem;margin-bottom:1.5rem">
@@ -145,7 +145,10 @@ def dashboard():
 
     rows_html = ""
     for row in rows:
-        issue_number, issue_title, issue_url, session_id, session_url, status, pull_requests, acus, created_at = row
+        issue_number, issue_title, issue_url, session_id, session_url, status = row[0], row[1], row[2], row[3], row[4], row[5]
+        pull_requests = row[6] if len(row) > 6 else ""
+        acus = row[7] if len(row) > 7 else 0.0
+        created_at = row[8] if len(row) > 8 else 0
         color = {"running": "#f59e0b", "finished": "#10b981", "failed": "#ef4444"}.get(status, "#6b7280")
         created = datetime.datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M") if created_at else "—"
         pr_links = ""
