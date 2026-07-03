@@ -68,15 +68,16 @@ GitHub Issue Created (labeled "devin-fix")
 
 ## End-to-End Workflow
 
-1. Engineer creates an issue in the Apache Superset fork
-2. Issue is tagged with `devin-fix`
-3. GitHub sends a webhook event to the FastAPI server
-4. FastAPI receives the event and validates the signature
-5. A Devin session is created automatically with a structured prompt
-6. Devin analyzes the repository
-7. Devin implements the remediation
-8. Devin creates a pull request
-9. The dashboard tracks task progress, completion, and business metrics
+1. A security scanner (e.g. Snyk, Dependabot) or code quality tool detects an issue and creates a GitHub issue labeled `devin-fix`
+2. GitHub sends a webhook event to the FastAPI server
+3. FastAPI receives the event and validates the signature
+4. A Devin session is created automatically with a structured prompt
+5. Devin analyzes the repository
+6. Devin implements the remediation
+7. Devin creates a pull request
+8. The dashboard tracks task progress, completion, and business metrics
+
+> **Note:** In this demo, issues are seeded manually via `scanner/create_issues.py` to simulate what a scanner would produce. The webhook and Devin dispatch are fully automated from that point forward.
 
 ---
 
@@ -128,12 +129,14 @@ GITHUB_WEBHOOK_SECRET=your_webhook_secret
 docker-compose up --build
 ```
 
-### 3. Create issues in the target repo (one-time)
+### 3. Seed demo issues (one-time, simulates scanner output)
 
 ```bash
 pip install -r requirements.txt
 python scanner/create_issues.py
 ```
+
+In production, a security scanner or Dependabot would create these issues automatically.
 
 ### 4. Configure GitHub webhook
 
@@ -147,6 +150,81 @@ In your fork → Settings → Webhooks → Add webhook:
 
 ```
 http://<your-server-ip>/dashboard
+```
+
+---
+
+## How to Simulate the Workflow
+
+This section walks through triggering the full end-to-end pipeline from scratch.
+
+### Prerequisites
+
+- Docker and Docker Compose installed on the server
+- `.env` file configured (see Setup step 1)
+- GitHub webhook pointing to your server (see Setup step 4)
+
+### Step 1 — Start the server
+
+```bash
+docker-compose up --build -d
+```
+
+Verify it is running:
+
+```bash
+curl http://localhost/dashboard
+```
+
+### Step 2 — Seed issues into the target repo
+
+This simulates what a security scanner or Dependabot would produce:
+
+```bash
+python scanner/create_issues.py
+```
+
+This creates 3 issues in the fork labeled `devin-fix`:
+- Pillow CVE dependency upgrade
+- Replace deprecated `datetime.utcnow()` calls
+- Add type hints to `superset/utils/core.py`
+
+### Step 3 — Observe webhook dispatch
+
+Each issue creation fires a GitHub webhook. The server receives it, validates the signature, and dispatches a Devin session. Check server logs:
+
+```bash
+docker-compose logs -f
+```
+
+You should see a log line per issue confirming the Devin session ID.
+
+### Step 4 — Watch Devin work
+
+Open the Devin session URLs from the dashboard to watch Devin clone the repo, implement the fix, and open a pull request in real time.
+
+### Step 5 — View results
+
+- Dashboard: `http://<your-server-ip>/dashboard` — shows session status, PR links, and metrics
+- Pull requests: `https://github.com/<your-username>/apache-superset-fork-cp/pulls`
+
+### Trigger a single issue manually (optional)
+
+To test a single webhook trigger without running the full scanner:
+
+```bash
+curl -X POST http://localhost/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Hub-Signature-256: sha256=<computed-hmac>" \
+  -d '{
+    "action": "labeled",
+    "issue": {
+      "number": 99,
+      "title": "Test: add missing __all__ export",
+      "html_url": "https://github.com/<your-username>/apache-superset-fork-cp/issues/99",
+      "labels": [{"name": "devin-fix"}]
+    }
+  }'
 ```
 
 ---
@@ -206,18 +284,3 @@ This solution enables:
 | Containerization | Docker Compose |
 | End-to-End Demo | Apache Superset fork |
 
----
-
-## Presentation Narrative
-
-### What
-Engineering teams accumulate repetitive maintenance work — dependency upgrades, technical debt, vulnerability fixes. These tasks are important but consistently delayed because engineers prioritize feature development.
-
-### How
-This solution uses GitHub events to automatically trigger Devin sessions. Devin evaluates the issue, performs the remediation, and produces observable engineering outputs — pull requests and status updates — tracked in a live dashboard.
-
-### Why
-Traditional automation can detect problems but cannot independently understand codebases and implement fixes. Devin acts as an autonomous engineering agent capable of taking full ownership of engineering maintenance tasks end to end.
-
-### When
-The solution can be extended to support security scanning platforms, JIRA integration, Slack notifications, multi-repository orchestration, and engineering productivity reporting.

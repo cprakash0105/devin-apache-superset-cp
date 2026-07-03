@@ -16,6 +16,8 @@ load_dotenv()
 
 app = FastAPI()
 DB_PATH = os.getenv("DB_PATH", "/app/observability/sessions.db")
+# Only show sessions created on or after this Unix timestamp (default: 2 July 2025 00:00 UTC)
+DEMO_SINCE = int(os.getenv("DEMO_SINCE", "1751414400"))
 
 
 def init_db():
@@ -59,7 +61,8 @@ def save_session(record: SessionRecord):
 def sync_active_sessions():
     with sqlite3.connect(DB_PATH) as conn:
         active = conn.execute(
-            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled')"
+            "SELECT session_id FROM sessions WHERE status NOT IN ('finished', 'failed', 'cancelled') AND created_at >= ?",
+            (DEMO_SINCE,)
         ).fetchall()
     print(f"🔄 sync_active_sessions — {len(active)} active sessions")
     for (session_id,) in active:
@@ -163,7 +166,7 @@ def refresh_all():
 def dashboard():
     sync_active_sessions()
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
+        rows = conn.execute("SELECT * FROM sessions WHERE created_at >= ? ORDER BY created_at DESC", (DEMO_SINCE,)).fetchall()
 
     # exclude test issues from stats
     real_rows = [r for r in rows if "[Test]" not in (r[1] or "")]
