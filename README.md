@@ -67,18 +67,21 @@ This solution positions Devin as the primary execution engine rather than a simp
 app/
 ├── main.py              # FastAPI webhook server + dashboard
 ├── devin_client.py      # Devin API wrapper
-└── models.py            # Pydantic models
+├── models.py            # Pydantic models
+└── __init__.py
 
 scanner/
-├── create_issues.py     # Seed issues into the target repo
-├── reset_issues.py      # Close test issues, recreate real ones
-└── close_duplicates.py  # Cleanup utility
+└── create_issues.py     # Seed issues into the target repo (simulates scanner)
+
+assets/
+└── devin-automation-arch.gif  # Architecture diagram
 
 observability/
-└── sessions.db          # SQLite — session tracking
+└── sessions.db          # SQLite — session tracking (auto-created at runtime)
 
 Dockerfile
 docker-compose.yml
+requirements.txt
 .env.example
 README.md
 ```
