@@ -76,9 +76,6 @@ scanner/
 assets/
 └── devin-automation-arch.gif  # Architecture diagram
 
-observability/
-└── dashboard.py         # Reserved for future observability extensions
-
 Dockerfile
 docker-compose.yml
 requirements.txt
