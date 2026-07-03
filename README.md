@@ -1,5 +1,10 @@
 # Autonomous Issue Remediation using Devin
 
+## Demo
+
+[![Watch the Demo](https://cdn.loom.com/sessions/thumbnails/4a6c7781f1d341d68e6e0cf1fbdc8cce-with-play.gif)](https://www.loom.com/share/4a6c7781f1d341d68e6e0cf1fbdc8cce)
+
+---
 ## Executive Summary
 
 Engineering teams accumulate technical debt in the form of dependency upgrades, vulnerability fixes, and code quality issues. While these tasks are important, they often compete with feature delivery and remain unresolved for long periods.
