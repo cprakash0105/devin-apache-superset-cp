@@ -77,7 +77,7 @@ assets/
 └── devin-automation-arch.gif  # Architecture diagram
 
 observability/
-└── sessions.db          # SQLite — session tracking (auto-created at runtime)
+└── dashboard.py         # Reserved for future observability extensions
 
 Dockerfile
 docker-compose.yml
