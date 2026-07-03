@@ -44,28 +44,6 @@ This solution positions Devin as the primary execution engine rather than a simp
 
 ![Architecture](assets/devin-automation-arch.gif)
 
-```
-GitHub Issue Created (labeled "devin-fix")
-         │
-         ▼
-  GitHub Webhook
-         │
-         ▼
-  FastAPI Orchestrator  (Docker — Azure VM)
-         │
-         ▼
-      Devin API
-         │
-         ▼
-     Devin Session
-         │  • Clones repo
-         │  • Implements fix
-         │  • Opens Pull Request
-         ▼
-  Observability Dashboard
-  http://<your-vm-ip>/dashboard
-```
-
 ---
 
 ## End-to-End Workflow
