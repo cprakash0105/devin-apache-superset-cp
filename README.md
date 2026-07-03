@@ -42,6 +42,8 @@ This solution positions Devin as the primary execution engine rather than a simp
 
 ## Architecture
 
+![Architecture](assets/devin-automation-arch.gif)
+
 ```
 GitHub Issue Created (labeled "devin-fix")
          │
